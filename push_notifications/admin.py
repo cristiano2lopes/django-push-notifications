@@ -16,7 +16,7 @@ class DeviceAdmin(admin.ModelAdmin):
 	list_display = ("__unicode__", "device_id", "user", "active", "date_created")
 	search_fields = ("name", "device_id", _user__username())
 	list_filter = ("active", )
-	actions = ("send_message", "send_bulk_message", "prune_devices", "enable", "disable")
+	actions = ("prune_devices", )
 
 	def send_message(self, request, queryset):
 		ret = []
