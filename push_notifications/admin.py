@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.utils.translation import ugettext_lazy as _
+from django.utils import formats
 from .models import APNSDevice, GCMDevice, get_expired_tokens
 
 
@@ -13,10 +14,14 @@ def _user__username():
 
 
 class DeviceAdmin(admin.ModelAdmin):
-	list_display = ("__unicode__", "device_id", "user", "active", "date_created")
+	list_display = ("__unicode__", "get_device_id", "user", "active", "date_created")
 	search_fields = ("name", "device_id", _user__username())
 	list_filter = ("active", )
 	actions = ("prune_devices", )
+
+	def get_device_id(self, obj):
+		return formats.number_format(obj.device_id or '-')
+	get_device_id.short_description = 'Device Id'
 
 	def send_message(self, request, queryset):
 		ret = []
