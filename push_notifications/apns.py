@@ -278,9 +278,10 @@ def apns_send_bulk_message(registration_ids, alert, app_name=None, **kwargs):
 	it won't be included in the notification. You will need to pass None
 	to this for silent notifications.
 	"""
-	with closing(_apns_create_socket_to_push(app_name=app_name)) as socket:
-		for identifier, registration_id in enumerate(registration_ids):
+	for identifier, registration_id in enumerate(registration_ids):
+		with closing(_apns_create_socket_to_push(app_name=app_name)) as socket:
 			_apns_send(registration_id, alert, identifier=identifier, socket=socket, **kwargs)
+	with closing(_apns_create_socket_to_push(app_name=app_name)) as socket:
 		_apns_check_errors(socket)
 
 
