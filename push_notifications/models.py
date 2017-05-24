@@ -39,7 +39,7 @@ class GCMDeviceQuerySet(models.query.QuerySet):
 			if message is not None:
 				data["message"] = message
 
-			reg_ids = list(self.values_list("registration_id", flat=True))
+			reg_ids = list(self.filter(active=True).values_list("registration_id", flat=True))
 			return gcm_send_bulk_message(registration_ids=reg_ids, data=data, **kwargs)
 
 
