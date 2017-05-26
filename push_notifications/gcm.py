@@ -14,7 +14,7 @@ try:
 	from urllib.parse import urlencode
 except ImportError:
 	# Python 2 support
-	from urllib2 import Request, urlopen
+	from urllib2 import Request, urlopen, HTTPError
 	from urllib import urlencode
 
 from django.core.exceptions import ImproperlyConfigured
@@ -50,7 +50,7 @@ def _gcm_send(data, content_type):
 	request = Request(SETTINGS["GCM_POST_URL"], data, headers)
 	try:
 		return urlopen(request).read()
-	except urllib2.HTTPError as e:
+	except HTTPError as e:
 		logger.error(
 			u"Gcm -> Error {} with data {} headers {}".format(
 				unicode(e), unicode(data), unicode(headers)
