@@ -66,6 +66,9 @@ def _gcm_send_json(registration_ids, data, collapse_key=None, delay_while_idle=F
 	This will send the notification as json data.
 	"""
 
+	if not registration_ids:
+                return
+
 	values = {"registration_ids": registration_ids}
 
 	if data is not None:
