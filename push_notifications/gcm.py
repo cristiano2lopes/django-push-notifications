@@ -6,6 +6,7 @@ https://developer.android.com/google/gcm/index.html
 """
 
 import json
+import logging
 from .models import GCMDevice
 
 try:
@@ -19,6 +20,8 @@ except ImportError:
 from django.core.exceptions import ImproperlyConfigured
 from . import NotificationError
 from .settings import PUSH_NOTIFICATIONS_SETTINGS as SETTINGS
+
+logger = logging.getLogger(__name__)
 
 
 class GCMError(NotificationError):
@@ -45,7 +48,15 @@ def _gcm_send(data, content_type):
 	}
 
 	request = Request(SETTINGS["GCM_POST_URL"], data, headers)
-	return urlopen(request).read()
+	try:
+		return urlopen(request).read()
+	except urllib2.HTTPError as e:
+		logger.error(
+			u"Gcm -> Error {} with data {} headers {}".format(
+				unicode(e), unicode(data), unicode(headers)
+			)
+		)
+		raise e
 
 
 def _gcm_send_json(registration_ids, data, collapse_key=None, delay_while_idle=False, time_to_live=0):
