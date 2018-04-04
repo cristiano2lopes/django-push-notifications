@@ -1,24 +1,25 @@
+from __future__ import unicode_literals
+
 from django.conf import settings
 from django.db import models
+from django.utils.encoding import python_2_unicode_compatible
 from django.utils.translation import ugettext_lazy as _
-from .fields import HexIntegerField, UUIDField
+
+from .fields import HexIntegerField
 
 
-# Compatibility with custom user models, while keeping backwards-compatibility with <1.5
-AUTH_USER_MODEL = getattr(settings, "AUTH_USER_MODEL", "auth.User")
-
-
+@python_2_unicode_compatible
 class Device(models.Model):
 	name = models.CharField(max_length=255, verbose_name=_("Name"), blank=True, null=True)
 	active = models.BooleanField(verbose_name=_("Is active"), default=True,
 		help_text=_("Inactive devices will not be sent notifications"))
-	user = models.ForeignKey(AUTH_USER_MODEL, blank=True, null=True)
+	user = models.ForeignKey(settings.AUTH_USER_MODEL, blank=True, null=True)
 	date_created = models.DateTimeField(verbose_name=_("Creation date"), auto_now_add=True, null=True)
 
 	class Meta:
 		abstract = True
 
-	def __unicode__(self):
+	def __str__(self):
 		return self.name or \
 			str(self.device_id or "") or \
 			"%s for %s" % (self.__class__.__name__, self.user or "unknown user")
@@ -27,7 +28,6 @@ class Device(models.Model):
 class GCMDeviceManager(models.Manager):
 	def get_queryset(self):
 		return GCMDeviceQuerySet(self.model)
-	get_query_set = get_queryset  # Django < 1.6 compatiblity
 
 
 class GCMDeviceQuerySet(models.query.QuerySet):
@@ -39,7 +39,7 @@ class GCMDeviceQuerySet(models.query.QuerySet):
 			if message is not None:
 				data["message"] = message
 
-			reg_ids = list(self.filter(active=True).values_list("registration_id", flat=True))
+			reg_ids = list(self.filter(active=True).values_list('registration_id', flat=True))
 			return gcm_send_bulk_message(registration_ids=reg_ids, data=data, **kwargs)
 
 
@@ -67,21 +67,20 @@ class GCMDevice(Device):
 class APNSDeviceManager(models.Manager):
 	def get_queryset(self):
 		return APNSDeviceQuerySet(self.model)
-	get_query_set = get_queryset  # Django < 1.6 compatiblity
 
 
 class APNSDeviceQuerySet(models.query.QuerySet):
 	def send_message(self, message, **kwargs):
 		if self:
 			from .apns import apns_send_bulk_message
-			reg_ids = list(self.values_list("registration_id", flat=True))
+			reg_ids = list(self.filter(active=True).values_list('registration_id', flat=True))
 			return apns_send_bulk_message(registration_ids=reg_ids, alert=message, **kwargs)
 
 
 class APNSDevice(Device):
-	device_id = UUIDField(verbose_name=_("Device ID"), blank=True, null=True, db_index=True,
+	device_id = models.UUIDField(verbose_name=_("Device ID"), blank=True, null=True, db_index=True,
 		help_text="UDID / UIDevice.identifierForVendor()")
-	registration_id = models.CharField(verbose_name=_("Registration ID"), max_length=64, unique=True)
+	registration_id = models.CharField(verbose_name=_("Registration ID"), max_length=200, unique=True)
 
 	objects = APNSDeviceManager()
 

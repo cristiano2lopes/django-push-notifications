@@ -3,6 +3,8 @@ Apple Push Notification Service
 Documentation is available on the iOS Developer Library:
 https://developer.apple.com/library/ios/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Chapters/ApplePushService.html
 """
+
+import codecs
 import json
 import ssl
 import struct
@@ -105,8 +107,10 @@ def _apns_create_socket(address_tuple, app_name=None):
 
 	cert = APNSCert(app_name=app_name)
 
+	ca_certs = SETTINGS.get("APNS_CA_CERTIFICATES") or cert.ca_cert
+
 	sock = socket.socket()
-	sock = ssl.wrap_socket(sock, ssl_version=ssl.PROTOCOL_TLSv1, certfile=cert.cert, ca_certs=cert.ca_cert)
+	sock = ssl.wrap_socket(sock, ssl_version=ssl.PROTOCOL_TLSv1, certfile=cert.cert, ca_certs=ca_certs)
 	sock.connect(address_tuple)
 
 	return sock
@@ -295,5 +299,5 @@ def apns_fetch_inactive_ids(app_name=None):
                 # Maybe we should have a flag to return the timestamp?
                 # It doesn't seem that useful right now, though.
                 for tStamp, registration_id in _apns_receive_feedback(socket):
-                	inactive_ids.append(registration_id.encode('hex'))
+                	inactive_ids.append(codecs.encode(registration_id, 'hex_codec'))
                 return inactive_ids

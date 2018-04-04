@@ -1,21 +1,17 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.contrib.auth import get_user_model
 from django.utils.translation import ugettext_lazy as _
+from .gcm import GCMError
 from django.utils import formats
 from .models import APNSDevice, GCMDevice, get_expired_tokens
 
 
-def _user__username():
-	try:
-		from django.contrib.auth import get_user_model
-	except ImportError:
-		# Django <1.5
-		return "user__username"
-	return "user__%s" % (get_user_model().USERNAME_FIELD)
+User = get_user_model()
 
 
 class DeviceAdmin(admin.ModelAdmin):
-	list_display = ("__unicode__", "get_device_id", "user", "active", "date_created")
-	search_fields = ("name", "device_id", _user__username())
+	list_display = ("__str__", "get_device_id", "user", "active", "date_created")
+	search_fields = ("name", "device_id", "user__%s" % (User.USERNAME_FIELD))
 	list_filter = ("active", )
 	actions = ("prune_devices", )
 
@@ -23,26 +19,45 @@ class DeviceAdmin(admin.ModelAdmin):
 		return formats.number_format(obj.device_id or '-')
 	get_device_id.short_description = 'Device Id'
 
-	def send_message(self, request, queryset):
+	def send_messages(self, request, queryset, bulk=False):
+		"""
+		Provides error handling for DeviceAdmin send_message and send_bulk_message methods.
+		"""
 		ret = []
 		errors = []
 		r = ""
+
 		for device in queryset:
 			try:
-				r = device.send_message("Test single notification")
-			except Exception as e:
+				if bulk:
+					r = queryset.send_message("Test bulk notification")
+				else:
+					r = device.send_message("Test single notification")
+				if r:
+					ret.append(r)
+			except GCMError as e:
 				errors.append(str(e))
-			if r:
-				ret.append(r)
+
+			if bulk:
+				break
+
 		if errors:
-			self.message_user(request, _("Some messages could not be processed: %r" % ("\n".join(errors))))
+			self.message_user(request, _("Some messages could not be processed: %r" % (", ".join(errors))), level=messages.ERROR)
 		if ret:
-			self.message_user(request, _("All messages were sent: %s" % ("\n".join(ret))))
+			if not bulk:
+				ret = ", ".join(ret)
+			if errors:
+				msg = _("Some messages were sent: %s" % (ret))
+			else:
+				msg = _("All messages were sent: %s" % (ret))
+			self.message_user(request, msg)
+
+	def send_message(self, request, queryset):
+		self.send_messages(request, queryset)
 	send_message.short_description = _("Send test message")
 
 	def send_bulk_message(self, request, queryset):
-		r = queryset.send_message("Test bulk notification")
-		self.message_user(request, _("All messages were sent: %s" % (r)))
+		self.send_messages(request, queryset, True)
 	send_bulk_message.short_description = _("Send test message in bulk")
 
 	def enable(self, request, queryset):
