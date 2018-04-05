@@ -3,6 +3,7 @@ For Changes
 
 * Log http errors on GCM/FCM
 * If an empy list of registration ids is passed to send gcm/fcm early return from the method
+* Make min version of django 1.9 instead of 1.10
 
 v1.5.0 (2017-04-16)
 ===================
