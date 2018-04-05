@@ -1,8 +1,8 @@
 """
-Google Cloud Messaging
-Previously known as C2DM
-Documentation is available on the Android Developer website:
-https://developer.android.com/google/gcm/index.html
+Firebase Cloud Messaging
+Previously known as GCM / C2DM
+Documentation is available on the Firebase Developer website:
+https://firebase.google.com/docs/cloud-messaging/
 """
 
 import json
@@ -11,15 +11,29 @@ from .models import GCMDevice
 
 try:
 	from urllib.request import Request, urlopen
-	from urllib.parse import urlencode
 except ImportError:
 	# Python 2 support
 	from urllib2 import Request, urlopen, HTTPError
-	from urllib import urlencode
 
 from django.core.exceptions import ImproperlyConfigured
 from . import NotificationError
-from .settings import PUSH_NOTIFICATIONS_SETTINGS as SETTINGS
+from .conf import get_manager
+from .models import GCMDevice
+
+
+# Valid keys for FCM messages. Reference:
+# https://firebase.google.com/docs/cloud-messaging/http-server-ref
+FCM_TARGETS_KEYS = [
+	"to", "condition", "notification_key"
+]
+FCM_OPTIONS_KEYS = [
+	"collapse_key", "priority", "content_available", "delay_while_idle", "time_to_live",
+	"restricted_package_name", "dry_run"
+]
+FCM_NOTIFICATIONS_PAYLOAD_KEYS = [
+	"title", "body", "icon", "sound", "badge", "color", "tag", "click_action",
+	"body_loc_key", "body_loc_args", "title_loc_key", "title_loc_args"
+]
 
 logger = logging.getLogger(__name__)
 
@@ -36,173 +50,188 @@ def _chunks(l, n):
 		yield l[i:i + n]
 
 
-def _gcm_send(data, content_type):
-	key = SETTINGS.get("GCM_API_KEY")
-	if not key:
-		raise ImproperlyConfigured('You need to set PUSH_NOTIFICATIONS_SETTINGS["GCM_API_KEY"] to send messages through GCM.')
+def _gcm_send(data, content_type, application_id):
+	key = get_manager().get_gcm_api_key(application_id)
 
 	headers = {
 		"Content-Type": content_type,
 		"Authorization": "key=%s" % (key),
 		"Content-Length": str(len(data)),
 	}
-
-	request = Request(SETTINGS["GCM_POST_URL"], data, headers)
-
+	request = Request(get_manager().get_post_url("GCM", application_id), data, headers)
 	try:
-		return urlopen(request).read().decode("utf-8")
+		return urlopen(
+			request, timeout=get_manager().get_error_timeout("GCM", application_id)
+		).read().decode("utf-8")
 	except HTTPError as e:
 		logger.error(
 			u"Gcm -> Error {} with data {} headers {}".format(
 				unicode(e), unicode(data), unicode(headers)
 			)
-)
+		)
 		raise e
 
 
-def _gcm_send_plain(registration_id, data, **kwargs):
-	"""
-	Sends a GCM notification to a single registration_id.
-	This will send the notification as form data.
-	If sending multiple notifications, it is more efficient to use
-	gcm_send_bulk_message() with a list of registration_ids
-	"""
+def _fcm_send(data, content_type, application_id):
+	key = get_manager().get_fcm_api_key(application_id)
 
-	values = {"registration_id": registration_id}
+	headers = {
+		"Content-Type": content_type,
+		"Authorization": "key=%s" % (key),
+		"Content-Length": str(len(data)),
+	}
+	request = Request(get_manager().get_post_url("FCM", application_id), data, headers)
+	try:
+		return urlopen(
+			request, timeout=get_manager().get_error_timeout("FCM", application_id)
+		).read().decode("utf-8")
+	except HTTPError as e:
+		logger.error(
+			u"Fcm -> Error {} with data {} headers {}".format(
+				unicode(e), unicode(data), unicode(headers)
+			)
+		)
+		raise e
 
-	for k, v in data.items():
-		values["data.%s" % (k)] = v.encode("utf-8")
-
-	for k, v in kwargs.items():
-		if v:
-			if isinstance(v, bool):
-				# Encode bools into ints
-				v = 1
-			values[k] = v
-
-	data = urlencode(sorted(values.items())).encode("utf-8")  # sorted items for tests
-
-	result = _gcm_send(data, "application/x-www-form-urlencoded;charset=UTF-8")
-
-	# Information about handling response from Google docs (https://developers.google.com/cloud-messaging/http):
-	# If first line starts with id, check second line:
-	# If second line starts with registration_id, gets its value and replace the registration tokens in your
-	# server database. Otherwise, get the value of Error
-
-	if result.startswith("id"):
-		lines = result.split("\n")
-		if len(lines) > 1 and lines[1].startswith("registration_id"):
-			new_id = lines[1].split("=")[-1]
-			_gcm_handle_canonical_id(new_id, registration_id)
-
-	elif result.startswith("Error="):
-		if result in ("Error=NotRegistered", "Error=InvalidRegistration"):
-			# Deactivate the problematic device
-			device = GCMDevice.objects.filter(registration_id=values["registration_id"])
-			device.update(active=0)
-			return result
-
-		raise GCMError(result)
-
-	return result
-
-
-def _gcm_send_json(registration_ids, data, **kwargs):
-	"""
-	Sends a GCM notification to one or more registration_ids. The registration_ids
-	needs to be a list.
-	This will send the notification as json data.
-	"""
-
-	if not registration_ids:
-		return
-
-	values = {"registration_ids": registration_ids}
-
-	if data is not None:
-		values["data"] = data
-
-	for k, v in kwargs.items():
-		if v:
-			values[k] = v
-
-	data = json.dumps(values, separators=(",", ":"), sort_keys=True).encode("utf-8")  # keys sorted for tests
-
-	response = json.loads(_gcm_send(data, "application/json"))
-	if response["failure"] or response["canonical_ids"]:
+def _cm_handle_response(registration_ids, response_data, cloud_type, application_id=None):
+	response = response_data
+	if response.get("failure") or response.get("canonical_ids"):
 		ids_to_remove, old_new_ids = [], []
 		throw_error = False
 		for index, result in enumerate(response["results"]):
 			error = result.get("error")
 			if error:
-				# Information from Google docs (https://developers.google.com/cloud-messaging/http)
-				# If error is NotRegistered or InvalidRegistration, then we will deactivate devices because this
-				# registration ID is no more valid and can't be used to send messages, otherwise raise error
+				# https://firebase.google.com/docs/cloud-messaging/http-server-ref#error-codes
+				# If error is NotRegistered or InvalidRegistration, then we will deactivate devices
+				# because this registration ID is no more valid and can't be used to send messages,
+				# otherwise raise error
 				if error in ("NotRegistered", "InvalidRegistration"):
 					ids_to_remove.append(registration_ids[index])
 				else:
 					throw_error = True
 
-			# If registration_id is set, replace the original ID with the new value (canonical ID) in your
-			# server database. Note that the original ID is not part of the result, so you need to obtain it
-			# from the list of registration_ids passed in the request (using the same index).
+			# If registration_id is set, replace the original ID with the new value (canonical ID)
+			# in your server database. Note that the original ID is not part of the result, you need
+			# to obtain it from the list of registration_ids in the request (using the same index).
 			new_id = result.get("registration_id")
 			if new_id:
 				old_new_ids.append((registration_ids[index], new_id))
 
 		if ids_to_remove:
-			removed = GCMDevice.objects.filter(registration_id__in=ids_to_remove)
+			removed = GCMDevice.objects.filter(
+				registration_id__in=ids_to_remove, cloud_message_type=cloud_type
+			)
 			removed.update(active=0)
 
 		for old_id, new_id in old_new_ids:
-			_gcm_handle_canonical_id(new_id, old_id)
+			_cm_handle_canonical_id(new_id, old_id, cloud_type)
 
 		if throw_error:
 			raise GCMError(response)
 	return response
 
 
-def _gcm_handle_canonical_id(canonical_id, current_id):
+def _cm_send_request(
+	registration_ids, data, cloud_type="GCM", application_id=None,
+	use_fcm_notifications=True, **kwargs
+):
 	"""
-	Handle situation when GCM server response contains canonical ID
+	Sends a FCM or GCM notification to one or more registration_ids as json data.
+	The registration_ids needs to be a list.
 	"""
-	if GCMDevice.objects.filter(registration_id=canonical_id, active=True).exists():
-		GCMDevice.objects.filter(registration_id=current_id).update(active=False)
+	if not registration_ids:
+		return
+
+	payload = {"registration_ids": registration_ids} if registration_ids else {}
+
+	# If using FCM, optionnally autodiscovers notification related keys
+	# https://firebase.google.com/docs/cloud-messaging/concept-options#notifications_and_data_messages
+	if cloud_type == "FCM" and use_fcm_notifications:
+		notification_payload = {}
+		if "message" in data:
+			notification_payload["body"] = data.pop("message", None)
+
+		for key in FCM_NOTIFICATIONS_PAYLOAD_KEYS:
+			value_from_extra = data.pop(key, None)
+			if value_from_extra:
+				notification_payload[key] = value_from_extra
+			value_from_kwargs = kwargs.pop(key, None)
+			if value_from_kwargs:
+				notification_payload[key] = value_from_kwargs
+		if notification_payload:
+			payload["notification"] = notification_payload
+
+	if data:
+		payload["data"] = data
+
+	# Attach any additional non falsy keyword args (targets, options)
+	# See ref : https://firebase.google.com/docs/cloud-messaging/http-server-ref#table1
+	payload.update({
+		k: v for k, v in kwargs.items() if v and (k in FCM_TARGETS_KEYS or k in FCM_OPTIONS_KEYS)
+	})
+
+	# Sort the keys for deterministic output (useful for tests)
+	json_payload = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+	# Sends requests and handles the response
+	if cloud_type == "GCM":
+		response = json.loads(_gcm_send(
+			json_payload, "application/json", application_id=application_id
+		))
+	elif cloud_type == "FCM":
+		response = json.loads(_fcm_send(
+			json_payload, "application/json", application_id=application_id
+		))
 	else:
-		GCMDevice.objects.filter(registration_id=current_id).update(registration_id=canonical_id)
+		raise ImproperlyConfigured("cloud_type must be FCM or GCM not %s" % str(cloud_type))
+	return _cm_handle_response(registration_ids, response, cloud_type, application_id)
 
 
-def gcm_send_message(registration_id, data, **kwargs):
+def _cm_handle_canonical_id(canonical_id, current_id, cloud_type):
 	"""
-	Sends a GCM notification to a single registration_id.
+	Handle situation when FCM server response contains canonical ID
+	"""
+	devices = GCMDevice.objects.filter(cloud_message_type=cloud_type)
+	if devices.filter(registration_id=canonical_id, active=True).exists():
+		devices.filter(registration_id=current_id).update(active=False)
+	else:
+		devices.filter(registration_id=current_id).update(registration_id=canonical_id)
 
-	If sending multiple notifications, it is more efficient to use
-	gcm_send_bulk_message() with a list of registration_ids
+
+def send_message(registration_ids, data, cloud_type, application_id=None, **kwargs):
+	"""
+	Sends a FCM (or GCM) notification to one or more registration_ids. The registration_ids
+	can be a list or a single string. This will send the notification as json data.
 
 	A reference of extra keyword arguments sent to the server is available here:
-	https://developers.google.com/cloud-messaging/server-ref#downstream
+	https://firebase.google.com/docs/cloud-messaging/http-server-ref#table1
 	"""
+	if cloud_type == "FCM":
+		max_recipients = get_manager().get_max_recipients(cloud_type, application_id)
+	elif cloud_type == "GCM":
+		max_recipients = get_manager().get_max_recipients(cloud_type, application_id)
+	else:
+		raise ImproperlyConfigured("cloud_type must be FCM or GCM not %s" % str(cloud_type))
 
-	return _gcm_send_plain(registration_id, data, **kwargs)
+	# Checks for valid recipient
+	if registration_ids is None and "/topics/" not in kwargs.get("to", ""):
+		return
 
+	# Bundles the registration_ids in an list if only one is sent
+	if not isinstance(registration_ids, list):
+		registration_ids = [registration_ids] if registration_ids else None
 
-def gcm_send_bulk_message(registration_ids, data, **kwargs):
-	"""
-	Sends a GCM notification to one or more registration_ids. The registration_ids
-	needs to be a list.
-	This will send the notification as json data.
-
-	A reference of extra keyword arguments sent to the server is available here:
-	https://developers.google.com/cloud-messaging/server-ref#downstream
-	"""
-
-	# GCM only allows up to 1000 reg ids per bulk message
-	# https://developer.android.com/google/gcm/gcm.html#request
-	max_recipients = SETTINGS.get("GCM_MAX_RECIPIENTS")
-	if len(registration_ids) > max_recipients:
+	# FCM only allows up to 1000 reg ids per bulk message
+	# https://firebase.google.com/docs/cloud-messaging/server#http-request
+	if registration_ids:
 		ret = []
 		for chunk in _chunks(registration_ids, max_recipients):
-			ret.append(_gcm_send_json(chunk, data, **kwargs))
-		return ret
+			ret.append(_cm_send_request(
+				chunk, data, cloud_type=cloud_type, application_id=application_id, **kwargs
+			))
+		return ret[0] if len(ret) == 1 else ret
+	else:
+		return _cm_send_request(None, data, cloud_type=cloud_type, **kwargs)
 
-	return _gcm_send_json(registration_ids, data, **kwargs)
+
+send_bulk_message = send_message

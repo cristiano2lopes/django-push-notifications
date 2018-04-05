@@ -1,7 +1,7 @@
+import pkg_resources
 
-__author__ = "Jerome Leclanche"
-__email__ = "jerome@leclan.ch"
-__version__ = "1.4.1"
+
+__version__ = pkg_resources.require("django-push-notifications")[0].version
 
 
 class NotificationError(Exception):

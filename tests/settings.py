@@ -2,6 +2,7 @@
 import warnings
 warnings.simplefilter("ignore", Warning)
 
+
 DATABASES = {
 	"default": {
 		"ENGINE": "django.db.backends.sqlite3",
@@ -21,3 +22,5 @@ SITE_ID = 1
 ROOT_URLCONF = "core.urls"
 
 SECRET_KEY = "foobar"
+
+PUSH_NOTIFICATIONS_SETTINGS = {}
