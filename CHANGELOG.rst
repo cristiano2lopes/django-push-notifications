@@ -1,3 +1,9 @@
+For Changes
+===================
+
+* Log http errors on GCM/FCM
+* If an empy list of registration ids is passed to send gcm/fcm early return from the method
+
 v1.5.0 (2017-04-16)
 ===================
 * BACKWARDS-INCOMPATIBLE: Remove `push_notifications.api.tastypie` module. Only DRF is supported now.
