@@ -59,7 +59,11 @@ class GCMDeviceQuerySet(models.query.QuerySet):
 			if message is not None:
 				data["message"] = message
 
-			app_ids = self.filter(active=True).values_list("application_id", flat=True).distinct()
+			app_ids = kwargs.pop("application_ids", None)
+			if app_ids is None:
+				app_ids = self.filter(active=True).values_list(
+					"application_id", flat=True
+				).distinct()
 			response = []
 			for cloud_type in ("FCM", "GCM"):
 				for app_id in app_ids:
@@ -102,10 +106,18 @@ class GCMDevice(Device):
 		if message is not None:
 			data["message"] = message
 
-		return gcm_send_message(
-			self.registration_id, data, self.cloud_message_type,
-			application_id=self.application_id, **kwargs
-		)
+		app_ids = kwargs.pop("application_ids", None)
+		if app_ids is None:
+			app_ids = list(filter(None, [self.application_id]))
+
+		response = []
+		for app_id in app_ids:
+			result = gcm_send_message(
+				self.registration_id, data, self.cloud_message_type,
+				application_id=app_id, **kwargs
+			)
+			response.append(result)
+		return response
 
 
 class APNSDeviceManager(models.Manager):
@@ -118,7 +130,10 @@ class APNSDeviceQuerySet(models.query.QuerySet):
 		if self:
 			from .apns import apns_send_bulk_message
 
-			app_ids = self.filter(active=True).values_list("application_id", flat=True).distinct()
+			app_ids = kwargs.pop("application_ids", None)
+			if app_ids is None:
+				app_ids = self.filter(active=True).values_list("application_id", flat=True).distinct()
+
 			res = []
 			for app_id in app_ids:
 				reg_ids = list(self.filter(active=True, application_id=app_id).values_list(
@@ -152,12 +167,21 @@ class APNSDevice(Device):
 	def send_message(self, message, certfile=None, **kwargs):
 		from .apns import apns_send_message
 
-		return apns_send_message(
-			registration_id=self.registration_id,
-			alert=message,
-			application_id=self.application_id, certfile=certfile,
-			**kwargs
-		)
+		app_ids = kwargs.pop("application_ids", None)
+		if app_ids is None:
+			app_ids = list(filter(None, [self.application_id]))
+
+		response = []
+		for app_id in app_ids:
+			result = apns_send_message(
+				registration_id=self.registration_id,
+				alert=message,
+				application_id=app_id, certfile=certfile,
+				**kwargs
+			)
+			response.append(result)
+
+		return response
 
 
 class WNSDeviceManager(models.Manager):
