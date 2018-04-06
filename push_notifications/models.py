@@ -59,17 +59,15 @@ class GCMDeviceQuerySet(models.query.QuerySet):
 			if message is not None:
 				data["message"] = message
 
-			app_ids = kwargs.pop("application_ids", None)
-			if app_ids is None:
-				app_ids = self.filter(active=True).values_list(
-					"application_id", flat=True
-				).distinct()
+			app_ids = kwargs.pop("application_ids", [None])
+
 			response = []
 			for cloud_type in ("FCM", "GCM"):
 				for app_id in app_ids:
 					reg_ids = list(
 						self.filter(
-							active=True, cloud_message_type=cloud_type, application_id=app_id).values_list(
+							active=True, cloud_message_type=cloud_type
+						).values_list(
 							"registration_id", flat=True
 						)
 					)
@@ -106,15 +104,14 @@ class GCMDevice(Device):
 		if message is not None:
 			data["message"] = message
 
-		app_ids = kwargs.pop("application_ids", None)
-		if app_ids is None:
-			app_ids = list(filter(None, [self.application_id]))
+		app_ids = kwargs.pop("application_ids", [None])
 
 		response = []
 		for app_id in app_ids:
 			result = gcm_send_message(
 				self.registration_id, data, self.cloud_message_type,
-				application_id=app_id, **kwargs
+				application_id=app_id,
+				**kwargs
 			)
 			response.append(result)
 		return response
@@ -130,18 +127,20 @@ class APNSDeviceQuerySet(models.query.QuerySet):
 		if self:
 			from .apns import apns_send_bulk_message
 
-			app_ids = kwargs.pop("application_ids", None)
-			if app_ids is None:
-				app_ids = self.filter(active=True).values_list("application_id", flat=True).distinct()
+			app_ids = kwargs.pop("application_ids", [None])
 
 			res = []
 			for app_id in app_ids:
-				reg_ids = list(self.filter(active=True, application_id=app_id).values_list(
-					"registration_id", flat=True)
+				reg_ids = list(
+					self.filter(active=True).values_list(
+						"registration_id", flat=True
+					)
 				)
 				r = apns_send_bulk_message(
-					registration_ids=reg_ids, alert=message, application_id=app_id,
-					certfile=certfile, **kwargs
+					registration_ids=reg_ids, alert=message,
+					application_id=app_id,
+					certfile=certfile,
+					**kwargs
 				)
 				if hasattr(r, "keys"):
 					res += [r]
@@ -167,16 +166,15 @@ class APNSDevice(Device):
 	def send_message(self, message, certfile=None, **kwargs):
 		from .apns import apns_send_message
 
-		app_ids = kwargs.pop("application_ids", None)
-		if app_ids is None:
-			app_ids = list(filter(None, [self.application_id]))
+		app_ids = kwargs.pop("application_ids", [None])
 
 		response = []
 		for app_id in app_ids:
 			result = apns_send_message(
 				registration_id=self.registration_id,
 				alert=message,
-				application_id=app_id, certfile=certfile,
+				application_id=app_id,
+				certfile=certfile,
 				**kwargs
 			)
 			response.append(result)
@@ -194,13 +192,16 @@ class WNSDeviceQuerySet(models.query.QuerySet):
 		if self:
 			from .wns import wns_send_bulk_message
 
-			app_ids = self.filter(active=True).values_list("application_id", flat=True).distinct()
+			app_ids = kwargs.pop("application_ids", [None])
 			res = []
 			for app_id in app_ids:
-				reg_ids = list(self.filter(active=True, application_id=app_id).values_list(
+				reg_ids = list(self.filter(active=True).values_list(
 					"registration_id", flat=True
 				))
-				r = wns_send_bulk_message(uri_list=reg_ids, message=message, **kwargs)
+				r = wns_send_bulk_message(
+					uri_list=reg_ids, message=message,
+					application_id=app_id, **kwargs
+				)
 				if hasattr(r, "keys"):
 					res += [r]
 				elif hasattr(r, "__getitem__"):
@@ -222,7 +223,11 @@ class WNSDevice(Device):
 
 	def send_message(self, message, **kwargs):
 		from .wns import wns_send_message
-
-		return wns_send_message(
-			uri=self.registration_id, message=message, application_id=self.application_id, **kwargs
-		)
+		app_ids = kwargs.pop("application_ids", [None])
+		response = []
+		for app_id in app_ids:
+			result = wns_send_message(
+				uri=self.registration_id, message=message, application_id=app_id, **kwargs
+			)
+			response.append(result)
+		return response
